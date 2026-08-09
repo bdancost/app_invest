@@ -127,6 +127,40 @@ describe('InvestmentsService', () => {
     });
   });
 
+  describe('LCI simulation', () => {
+    it('should be tax exempt', async () => {
+      jest
+        .spyOn(bcbIntegrationService, 'getSeries')
+        .mockResolvedValueOnce([{ date: '2026-08-07', value: 0.054644 }]);
+
+      const result = await service.simulate({
+        type: InvestmentType.LCI,
+        initialAmount: 1000,
+        months: 12,
+        cdiPercentage: 95,
+      });
+
+      expect(result.isTaxExempt).toBe(true);
+    });
+  });
+
+  describe('CDB tax status', () => {
+    it('should not be tax exempt', async () => {
+      jest
+        .spyOn(bcbIntegrationService, 'getSeries')
+        .mockResolvedValueOnce([{ date: '2026-08-07', value: 0.054644 }]);
+
+      const result = await service.simulate({
+        type: InvestmentType.CDB,
+        initialAmount: 1000,
+        months: 12,
+        cdiPercentage: 110,
+      });
+
+      expect(result.isTaxExempt).toBe(false);
+    });
+  });
+
   describe('Poupança simulation', () => {
     it('should apply 0.5% monthly rate when SELIC is above 8.5% a.a.', async () => {
       // Arrange: SELIC = 14.75% a.a. (acima do threshold de 8.5%)

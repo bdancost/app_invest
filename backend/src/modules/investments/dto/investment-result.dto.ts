@@ -3,4 +3,5 @@ export interface InvestmentResultDto {
   grossReturn: number;
   monthlyRate: number;
   annualRate: number;
+  isTaxExempt: boolean;
 }

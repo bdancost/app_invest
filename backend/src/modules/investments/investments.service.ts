@@ -3,6 +3,7 @@ import { BcbIntegrationService } from '../bcb-integration/bcb-integration.servic
 import { SeriesCode } from '../bcb-integration/constants/series-code.enum';
 import { InvestmentType } from './constants/investment-type.enum';
 import { SimulateInvestmentDto, InvestmentResultDto } from './dto';
+import { isTaxExempt } from './constants/tax-exemption';
 
 type CalculatorFn = (
   dto: SimulateInvestmentDto,
@@ -15,7 +16,9 @@ export class InvestmentsService {
   // many investment types we add in the future (CDB, LCI, LCA, etc).
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   private readonly calculators: Map<InvestmentType, CalculatorFn> = new Map([
-    [InvestmentType.CDB, this.calculateCdb.bind(this)],
+    [InvestmentType.CDB, this.calculateCdiPercentageProduct.bind(this)],
+    [InvestmentType.LCI, this.calculateCdiPercentageProduct.bind(this)],
+    [InvestmentType.LCA, this.calculateCdiPercentageProduct.bind(this)],
     [InvestmentType.TESOURO_SELIC, this.calculateTesouroSelic.bind(this)],
     [InvestmentType.POUPANCA, this.calculatePoupanca.bind(this)],
   ]);
@@ -42,15 +45,26 @@ export class InvestmentsService {
     if (dto.months <= 0) {
       throw new BadRequestException('months must be greater than zero');
     }
-    if (dto.type === InvestmentType.CDB && !dto.cdiPercentage) {
+
+    const requiresCdiPercentage =
+      dto.type === InvestmentType.CDB ||
+      dto.type === InvestmentType.LCI ||
+      dto.type === InvestmentType.LCA;
+
+    if (requiresCdiPercentage && !dto.cdiPercentage) {
       throw new BadRequestException(
-        'cdiPercentage is required for CDB simulations',
+        `cdiPercentage is required for ${dto.type} simulations`,
       );
     }
   }
 
   private async getAnnualIndexRate(type: InvestmentType): Promise<number> {
-    if (type === InvestmentType.CDB) {
+    const usesCdi =
+      type === InvestmentType.CDB ||
+      type === InvestmentType.LCI ||
+      type === InvestmentType.LCA;
+
+    if (usesCdi) {
       return this.getAnnualizedCdiRate();
     }
 
@@ -64,7 +78,6 @@ export class InvestmentsService {
       throw new BadRequestException('No index rate data available');
     }
 
-    // SELIC_TARGET já vem como taxa anual (ex: 14.75 = 14.75% a.a.)
     return latest.value / 100;
   }
 
@@ -88,27 +101,37 @@ export class InvestmentsService {
     return Math.pow(1 + dailyRate, BUSINESS_DAYS_PER_YEAR) - 1;
   }
 
-  private calculateCdb(
+  private calculateCdiPercentageProduct(
     dto: SimulateInvestmentDto,
     annualCdiRate: number,
   ): InvestmentResultDto {
     const effectiveAnnualRate = annualCdiRate * (dto.cdiPercentage! / 100);
-    return this.compound(dto.initialAmount, effectiveAnnualRate, dto.months);
+    return this.compound(
+      dto.initialAmount,
+      effectiveAnnualRate,
+      dto.months,
+      undefined,
+      dto.type,
+    );
   }
 
   private calculateTesouroSelic(
     dto: SimulateInvestmentDto,
     annualSelicRate: number,
   ): InvestmentResultDto {
-    return this.compound(dto.initialAmount, annualSelicRate, dto.months);
+    return this.compound(
+      dto.initialAmount,
+      annualSelicRate,
+      dto.months,
+      undefined,
+      dto.type,
+    );
   }
 
   private calculatePoupanca(
     dto: SimulateInvestmentDto,
     annualSelicRate: number,
   ): InvestmentResultDto {
-    // Regra simplificada: SELIC > 8.5% a.a. -> poupança rende 0.5% a.m.
-    // Senão, rende 70% da SELIC.
     const SELIC_THRESHOLD = 0.085;
 
     const monthlyRate =
@@ -120,6 +143,7 @@ export class InvestmentsService {
       annualRate,
       dto.months,
       monthlyRate,
+      dto.type,
     );
   }
 
@@ -127,7 +151,8 @@ export class InvestmentsService {
     initialAmount: number,
     annualRate: number,
     months: number,
-    precomputedMonthlyRate?: number,
+    precomputedMonthlyRate: number | undefined,
+    type: InvestmentType,
   ): InvestmentResultDto {
     const monthlyRate =
       precomputedMonthlyRate ?? Math.pow(1 + annualRate, 1 / 12) - 1;
@@ -139,6 +164,7 @@ export class InvestmentsService {
       grossReturn: this.round(finalAmount - initialAmount),
       monthlyRate: this.round(monthlyRate * 100),
       annualRate: this.round(annualRate * 100),
+      isTaxExempt: isTaxExempt(type),
     };
   }
 
