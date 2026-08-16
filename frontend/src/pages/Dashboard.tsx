@@ -1,17 +1,30 @@
 import { IndicatorCard } from "../components/indicators/IndicatorCard";
 import { InvestmentCard } from "../components/investments/InvestmentCard";
-import { MOCK_INVESTMENTS } from "../constants/mock-data";
 import { findBestInvestment } from "../utils/investment-comparison";
 import { useMarketIndicators } from "../hooks/useMarketIndicators";
+import { useInvestmentSimulations } from "../hooks/useInvestmentSimulations";
 
 export function Dashboard() {
-  const { rates, isLoading, isError, refetch } = useMarketIndicators();
-  const bestInvestment = findBestInvestment(MOCK_INVESTMENTS);
+  const {
+    rates,
+    isLoading: ratesLoading,
+    isError: ratesError,
+    refetch: refetchRates,
+  } = useMarketIndicators();
+
+  const {
+    investments,
+    isLoading: investmentsLoading,
+    isError: investmentsError,
+  } = useInvestmentSimulations();
+
+  const isLoading = ratesLoading || investmentsLoading;
+  const isError = ratesError || investmentsError;
 
   if (isLoading) {
     return (
       <p className="text-text-secondary text-sm max-w-3xl mx-auto">
-        Carregando indicadores de mercado...
+        Carregando dados de mercado...
       </p>
     );
   }
@@ -20,10 +33,10 @@ export function Dashboard() {
     return (
       <div className="max-w-3xl mx-auto">
         <p className="text-danger text-sm mb-3">
-          Não foi possível carregar os indicadores agora.
+          Não foi possível carregar os dados agora.
         </p>
         <button
-          onClick={() => refetch()}
+          onClick={() => refetchRates()}
           className="text-xs border border-border rounded-lg px-3 py-1.5 text-text-primary"
         >
           Tentar novamente
@@ -32,11 +45,13 @@ export function Dashboard() {
     );
   }
 
+  const bestInvestment = findBestInvestment(investments);
+
   return (
     <>
       <div className="max-w-3xl mx-auto mb-3 flex justify-end">
         <button
-          onClick={() => refetch()}
+          onClick={() => refetchRates()}
           className="text-xs border border-border rounded-lg px-3 py-1.5 text-text-primary"
         >
           Atualizar
@@ -68,7 +83,7 @@ export function Dashboard() {
       </section>
 
       <section className="grid grid-cols-4 gap-3 max-w-3xl mx-auto">
-        {MOCK_INVESTMENTS.map((investment) => (
+        {investments.map((investment) => (
           <InvestmentCard
             key={investment.type}
             investment={investment}
