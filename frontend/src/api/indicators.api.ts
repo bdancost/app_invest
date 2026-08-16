@@ -1,20 +1,15 @@
 import { apiClient } from "./client";
 
-export interface RawEconomicIndexPoint {
-  date: string;
-  value: number;
+export interface ReferenceRates {
+  selicAnnual: number;
+  cdiAnnual: number;
+  poupancaAnnual: number;
+  updatedAt: string;
 }
 
-export async function fetchSelicSeries(): Promise<RawEconomicIndexPoint[]> {
-  const response = await apiClient.get<RawEconomicIndexPoint[]>(
-    "/bcb-integration/selic",
-  );
-  return response.data;
-}
-
-export async function fetchCdiSeries(): Promise<RawEconomicIndexPoint[]> {
-  const response = await apiClient.get<RawEconomicIndexPoint[]>(
-    "/bcb-integration/cdi",
+export async function fetchReferenceRates(): Promise<ReferenceRates> {
+  const response = await apiClient.get<ReferenceRates>(
+    "/investments/reference-rates",
   );
   return response.data;
 }
