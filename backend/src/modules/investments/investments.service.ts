@@ -2,8 +2,12 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { BcbIntegrationService } from '../bcb-integration/bcb-integration.service';
 import { SeriesCode } from '../bcb-integration/constants/series-code.enum';
 import { InvestmentType } from './constants/investment-type.enum';
-import { SimulateInvestmentDto, InvestmentResultDto } from './dto';
 import { isTaxExempt } from './constants/tax-exemption';
+import {
+  SimulateInvestmentDto,
+  InvestmentResultDto,
+  ReferenceRatesDto,
+} from './dto';
 
 type CalculatorFn = (
   dto: SimulateInvestmentDto,
@@ -12,10 +16,7 @@ type CalculatorFn = (
 
 @Injectable()
 export class InvestmentsService {
-  // Map<InvestmentType, CalculatorFn> -> O(1) lookup regardless of how
-  // many investment types we add in the future (CDB, LCI, LCA, etc).
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-  private readonly calculators: Map<InvestmentType, CalculatorFn> = new Map([
+  private readonly calculators = new Map<InvestmentType, CalculatorFn>([
     [InvestmentType.CDB, this.calculateCdiPercentageProduct.bind(this)],
     [InvestmentType.LCI, this.calculateCdiPercentageProduct.bind(this)],
     [InvestmentType.LCA, this.calculateCdiPercentageProduct.bind(this)],
@@ -30,12 +31,28 @@ export class InvestmentsService {
 
     const annualIndexRate = await this.getAnnualIndexRate(dto.type);
 
-    const calculate = this.calculators.get(dto.type); // O(1)
+    const calculate = this.calculators.get(dto.type);
     if (!calculate) {
       throw new BadRequestException(`Unsupported investment type: ${dto.type}`);
     }
 
     return calculate(dto, annualIndexRate);
+  }
+
+  async getReferenceRates(): Promise<ReferenceRatesDto> {
+    const [selicAnnual, cdiAnnual] = await Promise.all([
+      this.getSelicAnnualRate(),
+      this.getAnnualizedCdiRate(),
+    ]);
+
+    const { annualRate: poupancaAnnual } = this.getPoupancaRates(selicAnnual);
+
+    return {
+      selicAnnual: this.round(selicAnnual * 100),
+      cdiAnnual: this.round(cdiAnnual * 100),
+      poupancaAnnual: this.round(poupancaAnnual * 100),
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   private validate(dto: SimulateInvestmentDto): void {
@@ -64,10 +81,10 @@ export class InvestmentsService {
       type === InvestmentType.LCI ||
       type === InvestmentType.LCA;
 
-    if (usesCdi) {
-      return this.getAnnualizedCdiRate();
-    }
+    return usesCdi ? this.getAnnualizedCdiRate() : this.getSelicAnnualRate();
+  }
 
+  private async getSelicAnnualRate(): Promise<number> {
     const series = await this.bcbIntegrationService.getSeries(
       SeriesCode.SELIC_TARGET,
       1,
@@ -78,6 +95,7 @@ export class InvestmentsService {
       throw new BadRequestException('No index rate data available');
     }
 
+    // SELIC_TARGET já vem como taxa anual (ex: 14.75 = 14.75% a.a.)
     return latest.value / 100;
   }
 
@@ -92,13 +110,26 @@ export class InvestmentsService {
       throw new BadRequestException('No index rate data available');
     }
 
-    // CDI_DAILY vem como taxa DIÁRIA (ex: 0.054644 = 0.054644% ao dia).
-    // Precisamos anualizar compondo sobre 252 dias úteis, que é a
-    // convenção padrão do mercado financeiro brasileiro.
+    // CDI_DAILY vem como taxa DIÁRIA; anualizamos compondo sobre 252
+    // dias úteis, convenção padrão do mercado financeiro brasileiro.
     const dailyRate = latest.value / 100;
     const BUSINESS_DAYS_PER_YEAR = 252;
 
     return Math.pow(1 + dailyRate, BUSINESS_DAYS_PER_YEAR) - 1;
+  }
+
+  private getPoupancaRates(annualSelicRate: number): {
+    monthlyRate: number;
+    annualRate: number;
+  } {
+    // Regra simplificada: SELIC > 8.5% a.a. -> poupança rende 0.5% a.m.
+    // Senão, rende 70% da SELIC.
+    const SELIC_THRESHOLD = 0.085;
+
+    const monthlyRate =
+      annualSelicRate > SELIC_THRESHOLD ? 0.005 : (annualSelicRate * 0.7) / 12;
+
+    return { monthlyRate, annualRate: monthlyRate * 12 };
   }
 
   private calculateCdiPercentageProduct(
@@ -132,12 +163,7 @@ export class InvestmentsService {
     dto: SimulateInvestmentDto,
     annualSelicRate: number,
   ): InvestmentResultDto {
-    const SELIC_THRESHOLD = 0.085;
-
-    const monthlyRate =
-      annualSelicRate > SELIC_THRESHOLD ? 0.005 : (annualSelicRate * 0.7) / 12;
-
-    const annualRate = monthlyRate * 12;
+    const { monthlyRate, annualRate } = this.getPoupancaRates(annualSelicRate);
     return this.compound(
       dto.initialAmount,
       annualRate,
